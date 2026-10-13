@@ -1,0 +1,72 @@
+# Notes for coding agents (and humans)
+
+This is the Challenge 3 hackathon starter: an AI assistant for Austrian government services.
+See README.md for the overview.
+
+The template is deliberately incomplete: a mock backend with fictional citizens, one chat agent with
+ONE example tool (`get_my_profile`), a minimal system prompt and a plain UI. Building the rest is the
+team's job. Ask the team about design decisions (which tools, how confirmation works, tone) instead of
+silently picking a solution.
+
+## Project map
+
+- `src/index.ts`: Hono app. `/api/gov/*` mock backend, `/api/evals/chat`, `/agents/*` (Agents SDK routing).
+- `src/config.ts`: model (`MODEL_ID`) and AI Gateway settings.
+- `src/agent/citizen-assistant.ts`: `AIChatAgent` Durable Object. State = `AssistantSettings` (persona, language), synced with the frontend.
+- `src/agent/system-prompt.ts`: minimal system prompt.
+- `src/agent/tools.ts`: AI tools (`buildTools`), shared by the chat and the evals. Ships with one example (`get_my_profile`). The header lists the backend functions available for new tools.
+- `src/agent/run-assistant.ts`: non-streaming run of the same agent, used by `/api/evals/chat`.
+- `src/gov/service.ts`: business logic, used by both the Hono routes and the tools. Add new backend features here first.
+- `src/gov/db.ts`: D1 schema + lazy seeding. After changing the schema or personas, call `POST /api/gov/admin/reset`.
+- `src/gov/data/`: personas, services (forms, eligibility rules), human contact.
+- `src/knowledge/index.ts`: service facts with source URLs.
+- `frontend/`: React (Vite). Texts are in `frontend/i18n.ts` (German + English, keep both in sync).
+- `evals/`: scenarios (`scenarios.json`) + runner (`run.ts`).
+
+## Rules for new code
+
+- **New tools:** follow the `get_my_profile` pattern. Call functions from `src/gov/service.ts` directly (not the HTTP API).
+- **`citizenId` always comes from the session** (`settings.personaId`), never from a tool's input schema. Otherwise the model can be talked into reading other citizens' data.
+- **Write tools** (anything that submits, books or changes data) must be added to `EVAL_STUBBED_TOOLS` in `src/agent/tools.ts`, so `pnpm evals` never executes them.
+- **Never invent legal facts** (fees, deadlines, documents). Facts live in `src/knowledge/` with a source URL. Mark unverified facts as such.
+- **All data is fictional.** Don't add real personal data.
+- Keep code simple and commented: teams have mixed skill levels.
+- Mark extension points with `// 👉 EXTEND HERE`.
+
+## Don't break the setup
+
+These caused real bugs while building the template:
+
+- **Don't upgrade dependencies** (`pnpm update`, `@latest`, changing versions in `package.json`) unless the team asks. All versions are pinned on purpose.
+- **`workers-ai-provider@4.0.0` is patched** (`patches/`, registered in `pnpm-workspace.yaml`). Without the patch, Workers AI streams every chunk twice: doubled text in the chat and broken tool calls. If you upgrade it, check whether the bug is fixed upstream and then remove the patch, otherwise `pnpm install` fails.
+- **Keep the default model** (`@cf/zai-org/glm-4.7-flash` in `src/config.ts`) unless asked. `@cf/meta/llama-4-scout-17b-16e-instruct` often writes tool calls as plain text (`[get_my_profile()]`) instead of calling them.
+- **After changing bindings in `wrangler.jsonc`, run `pnpm cf-typegen`** and commit `worker-configuration.d.ts`. Otherwise you get errors like `Property 'GOV_DB' does not exist on type 'Env'`.
+- **`@ai-sdk/react` must stay installed.** It's an optional peer of `agents` / `@cloudflare/ai-chat`, and the frontend crashes without it.
+- **If the browser shows stale code after dependency changes**, delete `node_modules/.vite` and restart `pnpm dev`.
+
+## How to check your work
+
+1. `npx tsc --noEmit` (Worker) and `npx tsc --noEmit -p frontend/tsconfig.json` (frontend)
+2. `pnpm test` (backend unit tests, no AI)
+3. `pnpm evals` (needs `pnpm dev` running): after every change to the prompt, the tools or the model.
+   Model answers vary, so run them more than once before trusting a result.
+4. For every new feature or bug fix in the assistant's behaviour, add a scenario to `evals/scenarios.json`.
+5. The evals use the non-streaming path. Streaming bugs only show up in the browser chat, so test it there too.
+
+| Command | Purpose |
+|---|---|
+| `pnpm dev` | Local development (Vite + Worker), http://localhost:5173 |
+| `pnpm run deploy` | Build and deploy |
+| `pnpm cf-typegen` | Generate `Env` types |
+| `pnpm test` | Backend unit tests |
+| `pnpm evals` | AI scenario tests (`pnpm evals <id>` for single scenarios) |
+
+## Cloudflare docs
+
+Your knowledge of Cloudflare APIs may be outdated. Retrieve current docs before changing Workers, D1,
+Workers AI, AI Gateway or Agents SDK code:
+
+- If available, use the Cloudflare MCP servers or Cloudflare skills (see "Working with a coding agent" in README.md).
+- Agents SDK: https://developers.cloudflare.com/agents/llms.txt
+- Workers: https://developers.cloudflare.com/workers/
+- Workers AI models: https://developers.cloudflare.com/workers-ai/models/
